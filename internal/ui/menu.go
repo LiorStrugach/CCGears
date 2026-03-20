@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/mryan/ccgears/internal/config"
 	"github.com/mryan/ccgears/internal/preset"
@@ -60,7 +62,16 @@ func RunInteractiveMenu(cfg *config.Config, projectDir string) error {
 
 		switch choice {
 		case 0:
-			flowLoad(cfg, projectDir)
+			if flowLoad(cfg, projectDir) {
+				// User wants to launch claude
+				DisableRawMode()
+				showCursor()
+				if useColor {
+					printf("\033[2J\033[H")
+				}
+				launchClaude(projectDir)
+				return nil
+			}
 		case 1:
 			flowSave(cfg, projectDir)
 		case 2:
@@ -244,12 +255,13 @@ func flowCreate(cfg *config.Config, projectDir string) {
 	Success(fmt.Sprintf("Preset %s created %s", magBold(meta.Name), dim(fmt.Sprintf("(%d files)", count))))
 }
 
-func flowLoad(cfg *config.Config, projectDir string) {
+// flowLoad loads a preset and offers to launch claude. Returns true if claude should be launched.
+func flowLoad(cfg *config.Config, projectDir string) bool {
 	PrintHeader("Load Preset")
 
 	name := selectPreset(cfg, "Load")
 	if name == "" {
-		return
+		return false
 	}
 
 	// Show preview
@@ -260,17 +272,49 @@ func flowLoad(cfg *config.Config, projectDir string) {
 
 	if !Confirm(fmt.Sprintf("Load %s? Current state will be backed up.", magBold(name))) {
 		Warn("Cancelled.")
-		return
+		return false
 	}
 
 	count, err := preset.Load(cfg, name, projectDir)
 	if err != nil {
 		Error(fmt.Sprintf("%v", err))
-		return
+		return false
 	}
 	println()
 	Success(fmt.Sprintf("Loaded %s %s", magBold(name), dim(fmt.Sprintf("(%d files)", count))))
-	printf("  Run %s to start a new session.\n", cyanBold("claude"))
+	println()
+	printf("  %s\n", cyanBold("Now opening a new Claude session..."))
+	printf("  %s\n", dim("Press Enter to continue, q/Esc to cancel and return to CCGears"))
+	println()
+
+	wasRaw := IsRawMode()
+	if !wasRaw {
+		EnableRawMode()
+	}
+
+	for {
+		key, err := ReadKey()
+		if err != nil {
+			break
+		}
+		switch key {
+		case KeyEnter, KeyNewline:
+			if !wasRaw {
+				DisableRawMode()
+			}
+			return true
+		case KeyEscape, 'q':
+			if !wasRaw {
+				DisableRawMode()
+			}
+			return false
+		}
+	}
+
+	if !wasRaw {
+		DisableRawMode()
+	}
+	return false
 }
 
 func flowSave(cfg *config.Config, projectDir string) {
@@ -554,6 +598,21 @@ func RunList(cfg *config.Config, jsonOutput bool) error {
 		fmt.Printf("%-20s%s%s\n", p.Name, desc, lastUsed)
 	}
 	return nil
+}
+
+// launchClaude execs the claude command, replacing the current process.
+// Falls back to a message if claude is not found.
+func launchClaude(projectDir string) {
+	claudePath, err := exec.LookPath("claude")
+	if err != nil {
+		fmt.Printf("  %s 'claude' not found in PATH. Start it manually.\n", yellowBold("⚠"))
+		return
+	}
+	// Replace this process with claude
+	env := os.Environ()
+	syscall.Exec(claudePath, []string{"claude"}, env)
+	// If exec fails, fall back
+	fmt.Printf("  %s Failed to launch claude. Start it manually.\n", yellowBold("⚠"))
 }
 
 // RunLoadNonInteractive loads a preset without interactive prompts.
