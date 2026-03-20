@@ -3,25 +3,16 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/signal"
+	"os/exec"
 	"syscall"
+
+	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/mryan/ccgears/internal/config"
 	"github.com/mryan/ccgears/internal/ui"
 )
 
 func main() {
-	// Handle Ctrl+C: restore terminal state before exit
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sig
-		ui.DisableRawMode()
-		ui.ShowCursorPublic()
-		fmt.Println("\nInterrupted.")
-		os.Exit(130)
-	}()
-
 	args := os.Args[1:]
 
 	if len(args) > 0 {
@@ -34,13 +25,13 @@ func main() {
 			return
 		case "load":
 			if len(args) < 2 {
-				fmt.Fprintln(os.Stderr, "Usage: ccgears load <preset-name>")
+				_, _ = fmt.Fprintln(os.Stderr, "Usage: ccgears load <preset-name>")
 				os.Exit(1)
 			}
 			cfg := mustLoadConfig()
 			projectDir := mustGetwd()
 			if err := ui.RunLoadNonInteractive(cfg, args[1], projectDir); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				_, _ = fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 			return
@@ -48,30 +39,44 @@ func main() {
 			jsonOutput := len(args) > 1 && args[1] == "--json"
 			cfg := mustLoadConfig()
 			if err := ui.RunList(cfg, jsonOutput); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				_, _ = fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 			return
 		default:
-			fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", args[0])
+			_, _ = fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", args[0])
 			printUsage()
 			os.Exit(1)
 		}
 	}
 
-	// Interactive mode
+	// Interactive mode — Bubble Tea
 	cfg := mustLoadConfig()
-	projectDir := mustGetwd()
-	if err := ui.RunInteractiveMenu(cfg, projectDir); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	if err := cfg.EnsureDirs(); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
+	}
+	projectDir := mustGetwd()
+
+	app := ui.NewApp(cfg, projectDir)
+	p := tea.NewProgram(app, tea.WithAltScreen())
+
+	finalModel, err := p.Run()
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Check if we should launch claude
+	if m, ok := finalModel.(ui.App); ok && m.ShouldLaunchClaude() {
+		launchClaude()
 	}
 }
 
 func mustLoadConfig() *config.Config {
 	cfg, err := config.Load()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
 	}
 	return cfg
@@ -80,7 +85,7 @@ func mustLoadConfig() *config.Config {
 func mustGetwd() string {
 	dir, err := os.Getwd()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error getting working directory: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "Error getting working directory: %v\n", err)
 		os.Exit(1)
 	}
 	return dir
@@ -100,4 +105,16 @@ func printUsage() {
   Presets are stored in ~/.ccgears/presets/
   Override with CCGEARS_HOME environment variable.
 `)
+}
+
+func launchClaude() {
+	claudePath, err := exec.LookPath("claude")
+	if err != nil {
+		fmt.Printf("  'claude' not found in PATH. Start it manually.\n")
+		return
+	}
+	env := os.Environ()
+	if err := syscall.Exec(claudePath, []string{"claude"}, env); err != nil {
+		fmt.Printf("  Failed to launch claude: %v. Start it manually.\n", err)
+	}
 }
