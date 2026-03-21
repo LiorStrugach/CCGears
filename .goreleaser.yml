@@ -17,7 +17,8 @@ builds:
 
 archives:
   - format: tar.gz
-    name_template: "ccgears_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    name_template: >-
+      ccgears_{{ .Version }}_{{ if eq .Os "darwin" }}mac{{ else }}{{ .Os }}{{ end }}_{{ .Arch }}
     format_overrides:
       - goos: windows
         format: zip
@@ -49,3 +50,32 @@ release:
   github:
     owner: MrYanMYN
     name: CCGears
+  header: |
+    ## CCGears {{ .Version }}
+
+    Dynamic Preset Loader for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — snapshot your skills, MCP servers, and tool permissions into named presets and switch between them instantly.
+
+    ### Quick Install
+
+    **macOS / Linux:**
+    ```bash
+    # Download the archive for your platform from the assets below, then:
+    tar -xzf ccgears_{{ .Version }}_<os>_<arch>.tar.gz
+    sudo mv ccgears /usr/local/bin/
+    ccgears version
+    ```
+
+    **Windows:** Download the `.zip`, extract, and add `ccgears.exe` to your PATH.
+
+    ### Usage
+
+    ```bash
+    ccgears              # Interactive TUI — pick a preset, launch Claude Code
+    ccgears list         # List saved presets
+    ccgears load <name>  # Load a preset non-interactively
+    ccgears save         # Save current config to the active preset
+    ```
+
+    Inside Claude Code, type `/ccgears` to switch presets seamlessly mid-session.
+
+    Full documentation: [README](https://github.com/MrYanMYN/CCGears#readme)

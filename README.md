@@ -44,35 +44,52 @@ Excluded automatically: `.DS_Store`, `__pycache__`
 
 ## Installation
 
+### Download a release (recommended)
+
+Download the latest binary for your platform from the [Releases page](https://github.com/MrYanMYN/CCGears/releases).
+
+| Platform | File |
+|----------|------|
+| macOS (Apple Silicon) | `ccgears_*_mac_arm64.tar.gz` |
+| macOS (Intel) | `ccgears_*_mac_amd64.tar.gz` |
+| Linux (x86_64) | `ccgears_*_linux_amd64.tar.gz` |
+| Linux (ARM64) | `ccgears_*_linux_arm64.tar.gz` |
+| Windows (x86_64) | `ccgears_*_windows_amd64.zip` |
+| Windows (ARM64) | `ccgears_*_windows_arm64.zip` |
+
+#### macOS / Linux
+
+```bash
+# Download and extract (example for macOS Apple Silicon)
+tar -xzf ccgears_*_mac_arm64.tar.gz
+
+# Move to a directory in your PATH
+sudo mv ccgears /usr/local/bin/
+
+# Verify
+ccgears version
+```
+
+#### Windows
+
+1. Download and extract the `.zip` file
+2. Move `ccgears.exe` to a directory in your PATH (e.g. `C:\Users\<you>\bin\`)
+3. Or add the extracted folder to your PATH via System Settings > Environment Variables
+4. Open a new terminal and run `ccgears version`
+
 ### From source (requires Go 1.20+)
 
 ```bash
-git clone https://github.com/mryan/ccgears.git
-cd ccgears
+git clone https://github.com/MrYanMYN/CCGears.git
+cd CCGears
 go install ./cmd/ccgears
 ```
 
-The binary is installed to `$GOPATH/bin/ccgears` (typically `~/go/bin/ccgears`).
-
-Make sure `~/go/bin` is in your PATH:
+The binary is installed to `~/go/bin/ccgears`. Make sure it's in your PATH:
 
 ```bash
 # Add to ~/.zshrc or ~/.bashrc
 export PATH="$PATH:$HOME/go/bin"
-```
-
-### Build locally
-
-```bash
-go build -o ccgears ./cmd/ccgears
-./ccgears
-```
-
-### Cross-compile
-
-```bash
-GOOS=linux GOARCH=amd64 go build -o ccgears-linux ./cmd/ccgears
-GOOS=windows GOARCH=amd64 go build -o ccgears.exe ./cmd/ccgears
 ```
 
 ---
