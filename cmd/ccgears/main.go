@@ -4,10 +4,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -139,7 +137,7 @@ func runClaudeSession(sessionID string) {
 	}
 
 	// Ignore SIGINT so CCGears survives when /ccgears skill kills Claude
-	signal.Ignore(syscall.SIGINT)
+	ignoreSIGINT()
 
 	cmd := exec.Command(claudePath, args...)
 	cmd.Stdin = os.Stdin
@@ -149,7 +147,7 @@ func runClaudeSession(sessionID string) {
 	_ = cmd.Run() // blocks until claude exits
 
 	// Restore SIGINT handling
-	signal.Reset(syscall.SIGINT)
+	resetSIGINT()
 }
 
 // findLastSessionID finds the most recently modified session file for the given project directory.
@@ -204,49 +202,6 @@ func findLastSessionID(projectDir string) string {
 
 	// Strip .jsonl extension to get session ID
 	return strings.TrimSuffix(newestName, ".jsonl")
-}
-
-// killClaudeParent walks up the process tree from our PID to find the
-// claude process, then sends it SIGINT. Only kills that specific process.
-func killClaudeParent() {
-	pid := os.Getpid()
-	for {
-		ppid := getParentPID(pid)
-		if ppid <= 1 {
-			break // reached init, stop
-		}
-		name := getProcessName(ppid)
-		if name == "claude" || name == "node" {
-			// Found it — send SIGINT to just this process
-			_ = syscall.Kill(ppid, syscall.SIGINT)
-			return
-		}
-		pid = ppid
-	}
-	// Fallback: kill direct parent
-	_ = syscall.Kill(syscall.Getppid(), syscall.SIGINT)
-}
-
-// getParentPID reads the parent PID of a given PID via ps.
-func getParentPID(pid int) int {
-	out, err := exec.Command("ps", "-o", "ppid=", "-p", fmt.Sprintf("%d", pid)).Output()
-	if err != nil {
-		return 0
-	}
-	var ppid int
-	_, _ = fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &ppid)
-	return ppid
-}
-
-// getProcessName reads the process name of a given PID via ps.
-func getProcessName(pid int) string {
-	out, err := exec.Command("ps", "-o", "comm=", "-p", fmt.Sprintf("%d", pid)).Output()
-	if err != nil {
-		return ""
-	}
-	name := strings.TrimSpace(string(out))
-	// ps returns full path on some systems, get just the basename
-	return filepath.Base(name)
 }
 
 func mustLoadConfig() *config.Config {
