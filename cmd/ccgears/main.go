@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -45,6 +47,16 @@ func main() {
 				_, _ = fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
+			return
+		case "switch":
+			// Called by /ccgears skill inside Claude Code.
+			// Creates marker, lists presets, finds and kills the claude process.
+			_ = os.WriteFile(markerFile, []byte{}, 0644)
+			cfg := mustLoadConfig()
+			_ = cfg.EnsureDirs()
+			_ = ui.RunList(cfg, false)
+			fmt.Println("\nSwitching to CCGears...")
+			killClaudeParent()
 			return
 		default:
 			_, _ = fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", args[0])
@@ -121,6 +133,49 @@ func runClaudeSession(resume bool) {
 
 	// Restore SIGINT handling
 	signal.Reset(syscall.SIGINT)
+}
+
+// killClaudeParent walks up the process tree from our PID to find the
+// claude process, then sends it SIGINT. Only kills that specific process.
+func killClaudeParent() {
+	pid := os.Getpid()
+	for {
+		ppid := getParentPID(pid)
+		if ppid <= 1 {
+			break // reached init, stop
+		}
+		name := getProcessName(ppid)
+		if name == "claude" || name == "node" {
+			// Found it — send SIGINT to just this process
+			syscall.Kill(ppid, syscall.SIGINT)
+			return
+		}
+		pid = ppid
+	}
+	// Fallback: kill direct parent
+	syscall.Kill(syscall.Getppid(), syscall.SIGINT)
+}
+
+// getParentPID reads the parent PID of a given PID via ps.
+func getParentPID(pid int) int {
+	out, err := exec.Command("ps", "-o", "ppid=", "-p", fmt.Sprintf("%d", pid)).Output()
+	if err != nil {
+		return 0
+	}
+	var ppid int
+	_, _ = fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &ppid)
+	return ppid
+}
+
+// getProcessName reads the process name of a given PID via ps.
+func getProcessName(pid int) string {
+	out, err := exec.Command("ps", "-o", "comm=", "-p", fmt.Sprintf("%d", pid)).Output()
+	if err != nil {
+		return ""
+	}
+	name := strings.TrimSpace(string(out))
+	// ps returns full path on some systems, get just the basename
+	return filepath.Base(name)
 }
 
 func mustLoadConfig() *config.Config {

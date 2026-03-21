@@ -3,17 +3,17 @@ name: ccgears
 description: >
   Switch to the CCGears preset manager. Automatically exits this session
   and opens CCGears. Session resumes after preset switch.
-allowed-tools: Bash(touch *), Bash(export *), Bash(ccgears *), Bash(kill *)
+allowed-tools: Bash(/Users/mryan/Documents/Hobby/CCGears/ccgears switch)
 ---
 
 # CCGears — Switch Presets
 
 When this skill is invoked, IMMEDIATELY run this single Bash command.
-Do NOT ask questions. Do NOT present options. Just execute this command:
+Do NOT ask questions. Do NOT present options. Just execute:
 
 ```bash
-touch /tmp/.ccgears-switch && export PATH="$PATH:$HOME/go/bin" && ccgears list && kill -INT $PPID
+/Users/mryan/Documents/Hobby/CCGears/ccgears switch
 ```
 
-This will list the available presets, then exit this session. CCGears will
-open automatically and this session will resume after the preset switch.
+This lists available presets, then exits this session. CCGears opens
+automatically and this session resumes after the preset switch.

@@ -274,35 +274,104 @@ func updateLastUsed(cfg *config.Config, name string) error {
 	return writeMeta(filepath.Join(cfg.StorePath, name), meta)
 }
 
-// ccgearsSkillContent is the embedded SKILL.md for the /ccgears slash command.
-// This gets injected into every loaded preset so the command persists across switches.
-const ccgearsSkillContent = `---
+// ccgearsSkillTemplate is the SKILL.md template. %s is replaced with the absolute ccgears binary path.
+const ccgearsSkillTemplate = `---
 name: ccgears
 description: >
   Switch to the CCGears preset manager. Automatically exits this session
   and opens CCGears. Session resumes after preset switch.
-allowed-tools: Bash(touch *), Bash(export *), Bash(ccgears *), Bash(kill *)
+allowed-tools: Bash(%s switch)
 ---
 
 # CCGears — Switch Presets
 
 When this skill is invoked, IMMEDIATELY run this single Bash command.
-Do NOT ask questions. Do NOT present options. Just execute this command:
+Do NOT ask questions. Do NOT present options. Just execute:
 
 ` + "```" + `bash
-touch /tmp/.ccgears-switch && export PATH="$PATH:$HOME/go/bin" && ccgears list && kill -INT $PPID
+%s switch
 ` + "```" + `
 
-This will list the available presets, then exit this session. CCGears will
-open automatically and this session will resume after the preset switch.
+This lists available presets, then exits this session. CCGears opens
+automatically and this session resumes after the preset switch.
 `
 
-// ensureCCGearsSkill writes the ccgears skill into .claude/skills/ccgears/
-// so the /ccgears command persists after every preset load.
-func ensureCCGearsSkill(claudeDir string) {
-	skillDir := filepath.Join(claudeDir, "skills", "ccgears")
-	skillFile := filepath.Join(skillDir, "SKILL.md")
+// getCCGearsPath returns the absolute path to the ccgears binary.
+func getCCGearsPath() string {
+	exe, err := os.Executable()
+	if err != nil {
+		// Fallback: try common locations
+		home, _ := os.UserHomeDir()
+		return filepath.Join(home, "go", "bin", "ccgears")
+	}
+	// Resolve symlinks
+	resolved, err := filepath.EvalSymlinks(exe)
+	if err != nil {
+		return exe
+	}
+	return resolved
+}
 
+// ensureCCGearsSkill writes the ccgears skill into .claude/skills/ccgears/
+// and ensures the Bash permission is in settings.local.json
+// so the /ccgears command persists and auto-approves after every preset load.
+func ensureCCGearsSkill(claudeDir string) {
+	binPath := getCCGearsPath()
+	skillContent := fmt.Sprintf(ccgearsSkillTemplate, binPath, binPath)
+
+	// Write skill file
+	skillDir := filepath.Join(claudeDir, "skills", "ccgears")
 	os.MkdirAll(skillDir, 0755)
-	os.WriteFile(skillFile, []byte(ccgearsSkillContent), 0644)
+	os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(skillContent), 0644)
+
+	// Ensure permission in settings.local.json
+	permPattern := fmt.Sprintf("Bash(%s switch)", binPath)
+	ensureCCGearsPermissions(claudeDir, permPattern)
+}
+
+// ensureCCGearsPermissions adds the ccgears Bash permission to settings.local.json.
+func ensureCCGearsPermissions(claudeDir string, permPattern string) {
+	settingsFile := filepath.Join(claudeDir, "settings.local.json")
+
+	// Read existing settings
+	var settings map[string]interface{}
+	data, err := os.ReadFile(settingsFile)
+	if err != nil {
+		settings = make(map[string]interface{})
+	} else {
+		if err := json.Unmarshal(data, &settings); err != nil {
+			settings = make(map[string]interface{})
+		}
+	}
+
+	// Get or create permissions.allow
+	perms, _ := settings["permissions"].(map[string]interface{})
+	if perms == nil {
+		perms = make(map[string]interface{})
+	}
+
+	allowList, _ := perms["allow"].([]interface{})
+
+	// Check if the permission already exists
+	for _, a := range allowList {
+		if s, ok := a.(string); ok && s == permPattern {
+			return // already present
+		}
+	}
+
+	allowList = append(allowList, permPattern)
+	changed := true
+
+	if !changed {
+		return
+	}
+
+	perms["allow"] = allowList
+	settings["permissions"] = perms
+
+	out, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return
+	}
+	os.WriteFile(settingsFile, out, 0644)
 }
