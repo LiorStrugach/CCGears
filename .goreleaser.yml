@@ -27,11 +27,23 @@ checksum:
 
 changelog:
   sort: asc
+  groups:
+    - title: Features
+      regexp: "^feat"
+    - title: Bug Fixes
+      regexp: "^fix"
+    - title: Refactoring
+      regexp: "^refactor"
+    - title: Performance
+      regexp: "^perf"
+    - title: Other
+      order: 999
   filters:
     exclude:
       - "^docs:"
       - "^test:"
       - "^chore:"
+      - "^ci:"
 
 release:
   github:
