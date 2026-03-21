@@ -48,7 +48,7 @@ changelog:
 
 release:
   github:
-    owner: MrYanMYN
+    owner: LiorStrugach
     name: CCGears
   header: |
     ## CCGears {{ .Version }}

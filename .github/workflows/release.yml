@@ -25,10 +25,15 @@ jobs:
       - name: Run tests
         run: go test ./internal/... -v
 
+      - name: Delete existing release if any
+        run: gh release delete ${{ github.ref_name }} --yes --cleanup-tag || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
-          version: latest
+          version: "~> v2"
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
