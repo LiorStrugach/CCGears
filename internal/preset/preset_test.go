@@ -18,16 +18,30 @@ func setupTest(t *testing.T) (*config.Config, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.EnsureDirs()
+	if err := cfg.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
 
 	// Create a project directory with .claude/ and tools/
 	project := t.TempDir()
-	os.MkdirAll(filepath.Join(project, ".claude", "skills", "my-skill"), 0755)
-	os.WriteFile(filepath.Join(project, ".claude", "settings.local.json"), []byte(`{"permissions":{}}`), 0644)
-	os.WriteFile(filepath.Join(project, ".claude", "skills", "my-skill", "SKILL.md"), []byte("---\nname: my-skill\n---\n"), 0644)
-	os.MkdirAll(filepath.Join(project, "tools"), 0755)
-	os.WriteFile(filepath.Join(project, "tools", "script.py"), []byte("print('hello')"), 0644)
-	os.WriteFile(filepath.Join(project, "CLAUDE.md"), []byte("# My Project\nInstructions here"), 0644)
+	if err := os.MkdirAll(filepath.Join(project, ".claude", "skills", "my-skill"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, ".claude", "settings.local.json"), []byte(`{"permissions":{}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, ".claude", "skills", "my-skill", "SKILL.md"), []byte("---\nname: my-skill\n---\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(project, "tools"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "tools", "script.py"), []byte("print('hello')"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "CLAUDE.md"), []byte("# My Project\nInstructions here"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	return cfg, project
 }
@@ -65,7 +79,7 @@ func TestCreate_Success(t *testing.T) {
 func TestCreate_AlreadyExists(t *testing.T) {
 	cfg, project := setupTest(t)
 
-	Create(cfg, "test-preset", "first", project)
+	_, _, _ = Create(cfg, "test-preset", "first", project)
 	_, _, err := Create(cfg, "test-preset", "second", project)
 	if !errors.Is(err, ErrAlreadyExists) {
 		t.Errorf("err = %v, want ErrAlreadyExists", err)
@@ -93,7 +107,7 @@ func TestCreate_EmptyProject(t *testing.T) {
 
 func TestGet_Success(t *testing.T) {
 	cfg, project := setupTest(t)
-	Create(cfg, "test-preset", "desc", project)
+	_, _, _ = Create(cfg, "test-preset", "desc", project)
 
 	meta, err := Get(cfg, "test-preset")
 	if err != nil {
@@ -115,7 +129,7 @@ func TestGet_NotFound(t *testing.T) {
 
 func TestDelete_Success(t *testing.T) {
 	cfg, project := setupTest(t)
-	Create(cfg, "test-preset", "desc", project)
+	_, _, _ = Create(cfg, "test-preset", "desc", project)
 
 	if err := Delete(cfg, "test-preset"); err != nil {
 		t.Fatal(err)
@@ -149,8 +163,8 @@ func TestList_Empty(t *testing.T) {
 func TestList_Multiple(t *testing.T) {
 	cfg, project := setupTest(t)
 
-	Create(cfg, "beta", "second", project)
-	Create(cfg, "alpha", "first", project)
+	_, _, _ = Create(cfg, "beta", "second", project)
+	_, _, _ = Create(cfg, "alpha", "first", project)
 
 	presets, err := List(cfg)
 	if err != nil {
@@ -159,7 +173,6 @@ func TestList_Multiple(t *testing.T) {
 	if len(presets) != 2 {
 		t.Fatalf("len = %d, want 2", len(presets))
 	}
-	// Sorted by name
 	if presets[0].Name != "alpha" {
 		t.Errorf("first = %q, want %q", presets[0].Name, "alpha")
 	}
@@ -170,9 +183,8 @@ func TestList_Multiple(t *testing.T) {
 
 func TestLoad_Success(t *testing.T) {
 	cfg, project := setupTest(t)
-	Create(cfg, "test-preset", "desc", project)
+	_, _, _ = Create(cfg, "test-preset", "desc", project)
 
-	// Load into a different project directory
 	targetDir := t.TempDir()
 	count, err := Load(cfg, "test-preset", targetDir)
 	if err != nil {
@@ -182,7 +194,6 @@ func TestLoad_Success(t *testing.T) {
 		t.Errorf("count = %d, want >= 3", count)
 	}
 
-	// .claude/ should exist in target
 	if _, err := os.Stat(filepath.Join(targetDir, ".claude", "settings.local.json")); err != nil {
 		t.Error("settings.local.json not loaded")
 	}
@@ -196,12 +207,10 @@ func TestLoad_Success(t *testing.T) {
 
 func TestLoad_CreatesBackup(t *testing.T) {
 	cfg, project := setupTest(t)
-	Create(cfg, "test-preset", "desc", project)
+	_, _, _ = Create(cfg, "test-preset", "desc", project)
 
-	// Load into original project (which has files)
-	Load(cfg, "test-preset", project)
+	_, _ = Load(cfg, "test-preset", project)
 
-	// Backup should exist
 	if !snapshot.HasBackup(cfg.BackupPath) {
 		t.Error("backup should exist after load")
 	}
@@ -218,10 +227,11 @@ func TestLoad_NotFound(t *testing.T) {
 
 func TestSave_Success(t *testing.T) {
 	cfg, project := setupTest(t)
-	Create(cfg, "test-preset", "desc", project)
+	_, _, _ = Create(cfg, "test-preset", "desc", project)
 
-	// Modify project
-	os.WriteFile(filepath.Join(project, "tools", "new-tool.py"), []byte("new"), 0644)
+	if err := os.WriteFile(filepath.Join(project, "tools", "new-tool.py"), []byte("new"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	count, err := Save(cfg, "test-preset", project)
 	if err != nil {
@@ -231,7 +241,6 @@ func TestSave_Success(t *testing.T) {
 		t.Errorf("count = %d, want >= 4", count)
 	}
 
-	// New file should be in preset
 	presetDir := filepath.Join(cfg.StorePath, "test-preset")
 	if _, err := os.Stat(filepath.Join(presetDir, "tools", "new-tool.py")); err != nil {
 		t.Error("new-tool.py not saved to preset")
@@ -244,5 +253,78 @@ func TestSave_NotFound(t *testing.T) {
 	_, err := Save(cfg, "nonexistent", t.TempDir())
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestRename_Success(t *testing.T) {
+	cfg, project := setupTest(t)
+	_, _, _ = Create(cfg, "old-name", "test", project)
+
+	err := Rename(cfg, "old-name", "new-name")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = Get(cfg, "old-name")
+	if !errors.Is(err, ErrNotFound) {
+		t.Error("old name should not exist after rename")
+	}
+
+	meta, err := Get(cfg, "new-name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Name != "new-name" {
+		t.Errorf("Name = %q, want %q", meta.Name, "new-name")
+	}
+	if meta.Description != "test" {
+		t.Errorf("Description = %q, want %q", meta.Description, "test")
+	}
+}
+
+func TestRename_UpdatesActivePreset(t *testing.T) {
+	cfg, project := setupTest(t)
+	_, _, _ = Create(cfg, "active-one", "test", project)
+	cfg.ActivePreset = "active-one"
+	_ = cfg.Save()
+
+	err := Rename(cfg, "active-one", "active-two")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg2, _ := config.Load()
+	if cfg2.ActivePreset != "active-two" {
+		t.Errorf("ActivePreset = %q, want %q", cfg2.ActivePreset, "active-two")
+	}
+}
+
+func TestRename_NotFound(t *testing.T) {
+	cfg, _ := setupTest(t)
+
+	err := Rename(cfg, "nonexistent", "new-name")
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestRename_AlreadyExists(t *testing.T) {
+	cfg, project := setupTest(t)
+	_, _, _ = Create(cfg, "first", "one", project)
+	_, _, _ = Create(cfg, "second", "two", project)
+
+	err := Rename(cfg, "first", "second")
+	if !errors.Is(err, ErrAlreadyExists) {
+		t.Errorf("err = %v, want ErrAlreadyExists", err)
+	}
+}
+
+func TestRename_InvalidName(t *testing.T) {
+	cfg, project := setupTest(t)
+	_, _, _ = Create(cfg, "valid", "test", project)
+
+	err := Rename(cfg, "valid", "INVALID")
+	if err == nil {
+		t.Error("expected error for invalid new name")
 	}
 }

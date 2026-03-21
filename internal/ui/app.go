@@ -21,7 +21,6 @@ type appState int
 
 const (
 	stateMainMenu appState = iota
-	stateSelectPreset
 	statePreview
 	stateConfirm
 	stateTextInput
@@ -43,15 +42,12 @@ const (
 	flowUndo
 )
 
-var menuLabels = []string{
-	"Load preset",
-	"Save preset",
-	"Create preset",
-	"Scan & import",
-	"Delete preset",
-	"Undo last load",
-	"Exit",
-}
+// Fixed action items appended after presets in the main menu.
+const (
+	actionScan   = 0
+	actionCreate = 1
+	numActions   = 2
+)
 
 // App is the main Bubble Tea model.
 type App struct {
@@ -60,10 +56,10 @@ type App struct {
 	state      appState
 	flow       flowType
 
-	// Menu / list cursor
-	menuCursor   int
-	presetCursor int
-	presetList   []*preset.Meta
+	// Main menu cursor spans: presets (0..n-1), separator (skipped), actions (n+1..n+2)
+	menuCursor  int
+	presetList  []*preset.Meta
+	presetCount int // len(presetList), cached for bounds checking
 
 	// Scan
 	scanResults []preset.ScanResult
@@ -72,7 +68,7 @@ type App struct {
 
 	// Text input
 	textInput   textinput.Model
-	inputTarget string // "presetName", "presetDesc", "scanRoot", "confirmName"
+	inputTarget string
 	inputValues map[string]string
 
 	// Confirm
@@ -112,7 +108,47 @@ func (m App) ShouldLaunchClaude() bool {
 }
 
 func (m App) Init() tea.Cmd {
-	return nil
+	return m.refreshPresets()
+}
+
+type presetsLoadedMsg struct {
+	presets []*preset.Meta
+}
+
+func (m App) refreshPresets() tea.Cmd {
+	return func() tea.Msg {
+		presets, _ := preset.List(m.cfg)
+		return presetsLoadedMsg{presets: presets}
+	}
+}
+
+// totalItems returns the total navigable items: presets + 1 separator + 2 actions.
+func (m App) totalItems() int {
+	if m.presetCount == 0 {
+		return numActions // just the two action items, no separator
+	}
+	return m.presetCount + 1 + numActions // presets + separator + actions
+}
+
+// isOnPreset returns true if the cursor is on a preset row.
+func (m App) isOnPreset() bool {
+	return m.presetCount > 0 && m.menuCursor < m.presetCount
+}
+
+// isOnSeparator returns true if the cursor is on the separator row.
+func (m App) isOnSeparator() bool {
+	return m.presetCount > 0 && m.menuCursor == m.presetCount
+}
+
+// actionIndex returns which action item the cursor is on (0=scan, 1=create), or -1.
+func (m App) actionIndex() int {
+	if m.presetCount == 0 {
+		return m.menuCursor // no presets, actions start at 0
+	}
+	if m.menuCursor > m.presetCount {
+		return m.menuCursor - m.presetCount - 1
+	}
+	return -1
 }
 
 // Update handles all input events.
@@ -123,17 +159,25 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 	case tea.KeyMsg:
-		// Global quit on ctrl+c
 		if msg.Type == tea.KeyCtrlC {
 			return m, tea.Quit
 		}
+	case presetsLoadedMsg:
+		m.presetList = msg.presets
+		m.presetCount = len(msg.presets)
+		// Clamp cursor
+		if m.menuCursor >= m.totalItems() {
+			m.menuCursor = m.totalItems() - 1
+		}
+		if m.menuCursor < 0 {
+			m.menuCursor = 0
+		}
+		return m, nil
 	}
 
 	switch m.state {
 	case stateMainMenu:
 		return m.updateMainMenu(msg)
-	case stateSelectPreset:
-		return m.updateSelectPreset(msg)
 	case statePreview:
 		return m.updatePreview(msg)
 	case stateConfirm:
@@ -156,8 +200,6 @@ func (m App) View() string {
 	switch m.state {
 	case stateMainMenu:
 		return m.viewMainMenu()
-	case stateSelectPreset:
-		return m.viewSelectPreset()
 	case statePreview:
 		return m.viewPreview()
 	case stateConfirm:
@@ -174,7 +216,7 @@ func (m App) View() string {
 	return ""
 }
 
-// --- Main Menu ---
+// --- Main Menu (preset-centric) ---
 
 func (m App) updateMainMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -183,13 +225,39 @@ func (m App) updateMainMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "up", "k":
 			if m.menuCursor > 0 {
 				m.menuCursor--
+				// Skip separator
+				if m.isOnSeparator() {
+					m.menuCursor--
+				}
 			}
 		case "down", "j":
-			if m.menuCursor < len(menuLabels)-1 {
+			if m.menuCursor < m.totalItems()-1 {
 				m.menuCursor++
+				// Skip separator
+				if m.isOnSeparator() {
+					m.menuCursor++
+				}
 			}
 		case "enter":
-			return m.handleMenuSelect()
+			return m.handleMainMenuEnter()
+		case "s":
+			if m.isOnPreset() {
+				return m.handleSave()
+			}
+		case "r":
+			if m.isOnPreset() {
+				return m.handleRename()
+			}
+		case "d":
+			if m.isOnPreset() {
+				return m.handleDelete()
+			}
+		case "p":
+			if m.isOnPreset() {
+				return m.handlePreviewOnly()
+			}
+		case "u":
+			return m.executeUndo()
 		case "q", "esc":
 			return m, tea.Quit
 		}
@@ -197,23 +265,72 @@ func (m App) updateMainMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m App) handleMenuSelect() (tea.Model, tea.Cmd) {
-	switch m.menuCursor {
-	case 0: // Load
-		return m.startPresetSelect(flowLoad)
-	case 1: // Save
-		return m.startPresetSelect(flowSave)
-	case 2: // Create
-		return m.startCreateFlow()
-	case 3: // Scan
-		return m.startScanFlow()
-	case 4: // Delete
-		return m.startPresetSelect(flowDelete)
-	case 5: // Undo
-		return m.executeUndo()
-	case 6: // Exit
-		return m, tea.Quit
+func (m App) handleMainMenuEnter() (tea.Model, tea.Cmd) {
+	if m.isOnPreset() {
+		// Load the preset (show preview first)
+		m.selectedName = m.presetList[m.menuCursor].Name
+		m.flow = flowLoad
+		presetDir := preset.Dir(m.cfg, m.selectedName)
+		p := preview.Build(presetDir)
+		m.previewContent = RenderPreview(m.selectedName, p)
+		m.state = statePreview
+		return m, nil
 	}
+
+	switch m.actionIndex() {
+	case actionScan:
+		return m.startScanFlow()
+	case actionCreate:
+		return m.startCreateFlow()
+	}
+	return m, nil
+}
+
+func (m App) handleSave() (tea.Model, tea.Cmd) {
+	m.selectedName = m.presetList[m.menuCursor].Name
+	m.flow = flowSave
+	presetDir := preset.Dir(m.cfg, m.selectedName)
+	diff := preset.ComputeDiff(presetDir, m.projectDir)
+	if !diff.HasChanges() {
+		m.message = RenderWarn("No changes detected. Nothing to save.")
+		m.state = stateMessage
+		return m, nil
+	}
+	m.previewContent = RenderDiff(m.selectedName, diff)
+	m.confirmMsg = fmt.Sprintf("Save these changes to %s?", StyleMagBold.Render(m.selectedName))
+	m.state = stateConfirm
+	return m, nil
+}
+
+func (m App) handleRename() (tea.Model, tea.Cmd) {
+	m.selectedName = m.presetList[m.menuCursor].Name
+	m.inputTarget = "renameTo"
+	m.inputValues["renameFrom"] = m.selectedName
+	m.textInput.SetValue("")
+	m.textInput.Placeholder = m.selectedName
+	m.textInput.Focus()
+	m.state = stateTextInput
+	return m, textinput.Blink
+}
+
+func (m App) handleDelete() (tea.Model, tea.Cmd) {
+	m.selectedName = m.presetList[m.menuCursor].Name
+	m.flow = flowDelete
+	m.inputTarget = "confirmName"
+	m.textInput.SetValue("")
+	m.textInput.Placeholder = m.selectedName
+	m.textInput.Focus()
+	m.state = stateTextInput
+	return m, textinput.Blink
+}
+
+func (m App) handlePreviewOnly() (tea.Model, tea.Cmd) {
+	name := m.presetList[m.menuCursor].Name
+	presetDir := preset.Dir(m.cfg, name)
+	p := preview.Build(presetDir)
+	m.previewContent = RenderPreview(name, p)
+	m.message = m.previewContent
+	m.state = stateMessage
 	return m, nil
 }
 
@@ -221,128 +338,67 @@ func (m App) viewMainMenu() string {
 	var sb strings.Builder
 	sb.WriteString(Banner())
 	sb.WriteString("\n")
-	sb.WriteString("  " + StyleDim.Render("↑↓ navigate  Enter select  q quit"))
-	sb.WriteString("\n\n")
-	sb.WriteString(RenderBoxedMenu(menuLabels, m.menuCursor))
-	sb.WriteString("\n")
-	return sb.String()
-}
 
-// --- Preset Selection ---
+	if m.presetCount > 0 {
+		sb.WriteString("  " + StyleYellowBold.Render("Presets") + "\n\n")
 
-func (m App) startPresetSelect(f flowType) (tea.Model, tea.Cmd) {
-	presets, err := preset.List(m.cfg)
-	if err != nil {
-		m.message = RenderError(fmt.Sprintf("%v", err))
-		m.state = stateMessage
-		return m, nil
-	}
-	if len(presets) == 0 {
-		m.message = RenderWarn("No presets found. Create one first.")
-		m.state = stateMessage
-		return m, nil
-	}
-	m.presetList = presets
-	m.presetCursor = 0
-	m.flow = f
-	m.state = stateSelectPreset
-	return m, nil
-}
-
-func (m App) updateSelectPreset(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "up", "k":
-			if m.presetCursor > 0 {
-				m.presetCursor--
+		for i, p := range m.presetList {
+			desc := StyleDim.Render("(no description)")
+			if p.Description != "" {
+				d := p.Description
+				if len(d) > 45 {
+					d = d[:42] + "..."
+				}
+				desc = d
 			}
-		case "down", "j":
-			if m.presetCursor < len(m.presetList)-1 {
-				m.presetCursor++
+			lastUsed := ""
+			if p.LastUsed != "" {
+				lastUsed = "  " + StyleDim.Render(FormatDate(p.LastUsed))
 			}
-		case "enter":
-			m.selectedName = m.presetList[m.presetCursor].Name
-			return m.handlePresetSelected()
-		case "q", "esc":
-			m.state = stateMainMenu
-			m.flow = flowNone
-			return m, nil
+			line := fmt.Sprintf("%-18s %s%s", StyleMagBold.Render(p.Name), desc, lastUsed)
+			if i == m.menuCursor {
+				sb.WriteString("  " + StyleCyan.Render("▸") + " " + line + "\n")
+			} else {
+				sb.WriteString("    " + line + "\n")
+			}
+		}
+
+		// Separator
+		sb.WriteString("  " + StyleDim.Render(strings.Repeat("─", 60)) + "\n")
+	} else {
+		sb.WriteString("  " + StyleDim.Render("No presets yet. Scan or create one to get started.") + "\n\n")
+	}
+
+	// Action items
+	actionLabels := []string{
+		StyleCyan.Render("⟳") + "  Scan & import",
+		StyleGreen.Render("+") + "  Create new preset",
+	}
+	for i, label := range actionLabels {
+		idx := i
+		if m.presetCount > 0 {
+			idx = m.presetCount + 1 + i // skip separator
+		}
+		if idx == m.menuCursor {
+			sb.WriteString("  " + StyleCyan.Render("▸") + " " + StyleWhiteBold.Render(label) + "\n")
+		} else {
+			sb.WriteString("    " + label + "\n")
 		}
 	}
-	return m, nil
-}
 
-func (m App) handlePresetSelected() (tea.Model, tea.Cmd) {
-	switch m.flow {
-	case flowLoad:
-		// Show preview
-		presetDir := preset.Dir(m.cfg, m.selectedName)
-		p := preview.Build(presetDir)
-		m.previewContent = RenderPreview(m.selectedName, p)
-		m.state = statePreview
-	case flowSave:
-		// Show diff
-		presetDir := preset.Dir(m.cfg, m.selectedName)
-		diff := preset.ComputeDiff(presetDir, m.projectDir)
-		if !diff.HasChanges() {
-			m.message = RenderWarn("No changes detected. Nothing to save.")
-			m.state = stateMessage
-			return m, nil
-		}
-		m.previewContent = RenderDiff(m.selectedName, diff)
-		m.confirmMsg = fmt.Sprintf("Save these changes to %s?", StyleMagBold.Render(m.selectedName))
-		m.state = stateConfirm
-	case flowDelete:
-		// Confirm by typing name
-		m.inputTarget = "confirmName"
-		m.textInput.SetValue("")
-		m.textInput.Placeholder = m.selectedName
-		m.textInput.Focus()
-		m.state = stateTextInput
-	default:
-		m.state = stateMainMenu
-	}
-	return m, nil
-}
-
-func (m App) viewSelectPreset() string {
-	var sb strings.Builder
-	sb.WriteString(Banner())
+	// Hotkey bar
 	sb.WriteString("\n")
-
-	action := "Select"
-	switch m.flow {
-	case flowLoad:
-		action = "Load"
-	case flowSave:
-		action = "Save to"
-	case flowDelete:
-		action = "Delete"
-	default:
-		// other flows don't use preset selection
+	if m.isOnPreset() {
+		sb.WriteString("  " + StyleDim.Render("Enter load  s save  r rename  d delete  u undo  p preview  q quit"))
+	} else {
+		sb.WriteString("  " + StyleDim.Render("Enter select  u undo  q quit"))
 	}
-	sb.WriteString("  " + StyleYellowBold.Render(action+" Preset") + "\n")
-	sb.WriteString("  " + StyleDim.Render("↑↓ navigate  Enter select  q cancel") + "\n\n")
-
-	items := make([]string, len(m.presetList))
-	for i, p := range m.presetList {
-		desc := StyleDim.Render("(no description)")
-		if p.Description != "" {
-			desc = p.Description
-		}
-		lastUsed := ""
-		if p.LastUsed != "" {
-			lastUsed = "  " + StyleDim.Render(FormatDate(p.LastUsed))
-		}
-		items[i] = fmt.Sprintf("%-18s %s%s", StyleMagBold.Render(p.Name), desc, lastUsed)
-	}
-	sb.WriteString(RenderPresetList(items, m.presetCursor))
+	sb.WriteString("\n")
 
 	return sb.String()
 }
 
-// --- Preview ---
+// --- Preview (before load) ---
 
 func (m App) updatePreview(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -471,13 +527,11 @@ func (m App) handleTextInputSubmit(value string) (tea.Model, tea.Cmd) {
 	switch m.inputTarget {
 	case "presetName":
 		if value == "" {
-			m.message = RenderWarn("Cancelled.")
-			m.state = stateMessage
+			m.state = stateMainMenu
 			m.flow = flowNone
 			return m, nil
 		}
 		m.inputValues["presetName"] = value
-		// Now ask for description
 		m.inputTarget = "presetDesc"
 		m.textInput.SetValue("")
 		m.textInput.Placeholder = "(optional)"
@@ -486,7 +540,6 @@ func (m App) handleTextInputSubmit(value string) (tea.Model, tea.Cmd) {
 
 	case "presetDesc":
 		m.inputValues["presetDesc"] = value
-		// Show capture info and confirm
 		return m.showCreateConfirm()
 
 	case "scanRoot":
@@ -510,6 +563,23 @@ func (m App) handleTextInputSubmit(value string) (tea.Model, tea.Cmd) {
 		}
 		m.state = stateMessage
 		m.flow = flowNone
+		return m, nil
+
+	case "renameTo":
+		if value == "" {
+			m.state = stateMainMenu
+			return m, nil
+		}
+		oldName := m.inputValues["renameFrom"]
+		err := preset.Rename(m.cfg, oldName, value)
+		if err != nil {
+			m.message = RenderError(fmt.Sprintf("%v", err))
+			m.state = stateMessage
+			return m, nil
+		}
+		m.message = RenderSuccess(fmt.Sprintf("Renamed %s to %s",
+			StyleMagBold.Render(oldName), StyleMagBold.Render(value)))
+		m.state = stateMessage
 		return m, nil
 	}
 	return m, nil
@@ -544,6 +614,10 @@ func (m App) viewTextInput() string {
 		sb.WriteString("\n")
 		sb.WriteString("  " + StyleRedBold.Render("This cannot be undone.") + "\n\n")
 		sb.WriteString("  Type the preset name to confirm\n")
+	case "renameTo":
+		sb.WriteString("  " + StyleYellowBold.Render("Rename Preset") + "\n\n")
+		sb.WriteString("  Current name: " + StyleMagBold.Render(m.inputValues["renameFrom"]) + "\n")
+		sb.WriteString("  New name " + StyleDim.Render("(lowercase, hyphens, max 48 chars)") + "\n")
 	}
 
 	sb.WriteString("\n  " + StyleCyan.Render("❯") + " " + m.textInput.View())
@@ -828,7 +902,6 @@ func (m App) executeUndo() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Build info display and set up confirm
 	var sb strings.Builder
 	sb.WriteString("  " + StyleYellowBold.Render("Undo Last Load") + "\n\n")
 	sb.WriteString(RenderInfoLine("Preset:   ", StyleMagBold.Render(info.PresetLoaded)) + "\n")
@@ -845,13 +918,12 @@ func (m App) executeUndo() (tea.Model, tea.Cmd) {
 // --- Message ---
 
 func (m App) updateMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
+	switch msg.(type) {
 	case tea.KeyMsg:
 		m.state = stateMainMenu
 		m.flow = flowNone
 		m.previewContent = ""
-		_ = msg
-		return m, nil
+		return m, m.refreshPresets()
 	}
 	return m, nil
 }

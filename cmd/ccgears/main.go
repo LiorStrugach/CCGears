@@ -47,6 +47,18 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "rename":
+			if len(args) < 3 {
+				_, _ = fmt.Fprintln(os.Stderr, "Usage: ccgears rename <old-name> <new-name>")
+				os.Exit(1)
+			}
+			cfg := mustLoadConfig()
+			if err := preset.Rename(cfg, args[1], args[2]); err != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Renamed '%s' to '%s'.\n", args[1], args[2])
+			return
 		case "save":
 			cfg := mustLoadConfig()
 			if cfg.ActivePreset == "" {

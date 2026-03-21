@@ -9,7 +9,7 @@
   \___|\___|\___|___\__,_|_| /__/
 ```
 
-CCGears eliminates the context-switching tax in [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Every task type requires a different combination of skills, MCP servers, and tool permissions. CCGears lets you snapshot a configuration once, save it as a named preset, and switch to it instantly.
+CCGears eliminates the context-switching tax in [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Every task type requires a different combination of skills, MCP servers, and tool permissions. CCGears lets you snapshot a configuration (.claude folder) once, save it as a named preset, and switch to it instantly across all of your projects.
 
 No more manually remembering which tools belong to which context. No more re-enabling the same permissions at the start of every session.
 
@@ -105,7 +105,7 @@ cd ~/projects/my-infra-project
 ccgears
 ```
 
-Select **Create preset**, enter a name like `infra-tools`, and an optional description. CCGears snapshots your current `.claude/`, `tools/`, and `CLAUDE.md` into `~/.ccgears/presets/infra-tools/`.
+Select **Create new preset +** at the bottom of the menu, enter a name like `infra-tools`, and an optional description. CCGears snapshots your current `.claude/`, `tools/`, and `CLAUDE.md` into `~/.ccgears/presets/infra-tools/`.
 
 ### 2. Load a preset
 
@@ -116,13 +116,13 @@ cd ~/projects/different-project
 ccgears
 ```
 
-Select **Load preset**, pick `infra-tools`, review the preview, and confirm. Your `.claude/` and `tools/` are replaced with the preset's contents. The previous state is backed up automatically.
+Highlight a preset with arrow keys, press **Enter** to preview, then **Enter** again to load. Your `.claude/` and `tools/` are replaced with the preset's contents. The previous state is backed up automatically.
 
 After loading, press **Enter** to launch Claude Code directly, or **q** to return to the menu.
 
 ### 3. Scan and import existing configs
 
-Select **Scan & import** from the menu, enter a root directory (e.g. `~/Documents`), and CCGears will find all projects with Claude Code configurations. Use Space to toggle which ones to import, then Enter to confirm.
+Select **Scan & import** at the bottom of the menu, enter a root directory (e.g. `~/Documents`), and CCGears will find all projects with Claude Code configurations. Use Space to toggle which ones to import, then Enter to confirm.
 
 ### 4. Switch presets from inside Claude Code
 
@@ -144,23 +144,33 @@ This automatically exits the session, opens CCGears to pick a new preset, and re
 ccgears
 ```
 
-Launches the TUI with arrow-key navigation:
+Launches the preset-centric TUI:
 
 ```
-╭──────────────────────────────────╮
-│                                  │
-│   ▸ Load preset                  │
-│     Save preset                  │
-│     Create preset                │
-│     Scan & import                │
-│     Delete preset                │
-│     Undo last load               │
-│     Exit                         │
-│                                  │
-╰──────────────────────────────────╯
+  Presets
+
+  ▸ frigate              Imported from ~/Documents/ArguFrigate/frigate     2 days ago
+    testmaker            Imported from ~/Documents/Hobby/TestMaker         just now
+    watermelon           Creative pipeline config                          1 week ago
+  ────────────────────────────────────────────────────────────────────────
+    ⟳  Scan & import
+    +  Create new preset
+
+  Enter load  s save  r rename  d delete  u undo  p preview  q quit
 ```
 
-**Controls:** `↑↓` or `j/k` to navigate, `Enter` to select, `q` or `Esc` to go back.
+Your presets are the main menu. Use hotkeys to act on the highlighted preset:
+
+| Key | Action |
+|-----|--------|
+| `Enter` | Load the preset (preview first, then confirm) |
+| `s` | Save current project state to this preset |
+| `r` | Rename this preset |
+| `d` | Delete this preset (type name to confirm) |
+| `p` | Preview this preset (skills, tools, permissions) |
+| `u` | Undo last load (works from anywhere) |
+| `↑↓` / `j/k` | Navigate |
+| `q` / `Esc` | Quit |
 
 After loading a preset, CCGears launches `claude` as a subprocess. CCGears stays alive in the background — when Claude exits, CCGears can reopen for another preset switch.
 
@@ -174,6 +184,9 @@ ccgears load infra-tools
 
 # Save current state to the active preset
 ccgears save
+
+# Rename a preset
+ccgears rename old-name new-name
 
 # List all presets
 ccgears list
@@ -249,18 +262,18 @@ Key behaviors:
 
 ---
 
-## Menu Options
+## Preset Actions
 
-### Load preset
+### Load (Enter)
 
-1. Select a preset from the list
+1. Highlight a preset and press Enter
 2. Preview its contents — skills, permissions, tools, CLAUDE.md headline
-3. Confirm — current `.claude/` and `tools/` are backed up, then replaced
+3. Press Enter to confirm — current `.claude/` and `tools/` are backed up, then replaced
 4. Press Enter to launch `claude`, or q to return to the menu
 
-### Save preset
+### Save (s)
 
-Updates an existing preset with your current project state. Shows a diff summary before confirming:
+Hover over a preset and press `s` to save the current project state to it. Shows a diff summary before confirming:
 
 ```
   Changes to infra-tools:
@@ -272,28 +285,36 @@ Updates an existing preset with your current project state. Shows a diff summary
     2 unchanged
 ```
 
-### Create preset
+### Rename (r)
 
-Captures the current `.claude/`, `tools/`, and `CLAUDE.md` into a new named preset. Shows file counts and sizes before confirming.
+Hover over a preset and press `r` to rename it. Enter the new name (lowercase, hyphens, max 48 chars).
+
+### Delete (d)
+
+Hover over a preset and press `d` to delete it. Type the preset name to confirm.
+
+### Preview (p)
+
+Hover over a preset and press `p` to view its contents without loading.
+
+### Undo (u)
+
+Press `u` from anywhere to undo the last load. Restores the previous `.claude/` and `tools/` state. Only one undo level available.
+
+### Create new preset (+)
+
+Select **Create new preset +** at the bottom of the list. Enter a name and optional description. Captures current `.claude/`, `tools/`, and `CLAUDE.md`.
 
 **Preset name rules:** lowercase letters, digits, and hyphens only. Max 48 characters. No leading or trailing hyphens.
 
 ### Scan & import
 
-Discovers Claude Code configurations across your filesystem:
+Select **Scan & import** at the bottom of the list:
 
 1. Enter a root directory to scan (default: home directory)
 2. CCGears walks up to 4 levels deep, skipping `node_modules`, `.git`, `.venv`, `vendor`, etc.
 3. Multi-select which projects to import (Space to toggle, `a` for all, `n` for none)
 4. Creates presets automatically with names derived from directory names
-
-### Delete preset
-
-Removes a preset permanently. Requires typing the preset name to confirm.
-
-### Undo last load
-
-Restores the state from before the most recent Load operation. Only one undo level is available (the last load).
 
 ---
 
@@ -417,6 +438,7 @@ All other functionality uses the Go standard library.
 | `ccgears` | Interactive TUI (launches claude after loading) |
 | `ccgears load <name>` | Load a preset non-interactively |
 | `ccgears save` | Save current state to the active preset |
+| `ccgears rename <old> <new>` | Rename a preset |
 | `ccgears list` | List all presets |
 | `ccgears list --json` | List presets as JSON |
 | `ccgears switch` | Internal: used by `/ccgears` skill to trigger preset switch |

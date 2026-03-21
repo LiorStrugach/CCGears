@@ -120,6 +120,40 @@ func Delete(cfg *config.Config, name string) error {
 	return os.RemoveAll(presetDir)
 }
 
+// Rename changes a preset's name. Moves the directory and updates metadata.
+func Rename(cfg *config.Config, oldName, newName string) error {
+	if err := validate.PresetName(newName); err != nil {
+		return err
+	}
+
+	oldDir := filepath.Join(cfg.StorePath, oldName)
+	if _, err := os.Stat(oldDir); os.IsNotExist(err) {
+		return fmt.Errorf("%w: %s", ErrNotFound, oldName)
+	}
+
+	newDir := filepath.Join(cfg.StorePath, newName)
+	if _, err := os.Stat(newDir); err == nil {
+		return fmt.Errorf("%w: %s", ErrAlreadyExists, newName)
+	}
+
+	if err := os.Rename(oldDir, newDir); err != nil {
+		return fmt.Errorf("renaming preset directory: %w", err)
+	}
+
+	// Update metadata
+	meta, _ := readMeta(newDir)
+	meta.Name = newName
+	_ = writeMeta(newDir, meta)
+
+	// Update active preset if it was the renamed one
+	if cfg.ActivePreset == oldName {
+		cfg.ActivePreset = newName
+		_ = cfg.Save()
+	}
+
+	return nil
+}
+
 // Dir returns the filesystem path for a preset.
 func Dir(cfg *config.Config, name string) string {
 	return filepath.Join(cfg.StorePath, name)
