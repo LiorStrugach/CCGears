@@ -49,7 +49,7 @@ func ScanForProjects(rootDir string, maxDepth int) ([]ScanResult, error) {
 	var results []ScanResult
 	seen := make(map[string]bool)
 
-	filepath.WalkDir(rootDir, func(path string, d fs.DirEntry, err error) error {
+	_ = filepath.WalkDir(rootDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -156,12 +156,12 @@ func UniquePresetName(cfg *config.Config, baseName string) string {
 func ShortenPath(path string) string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return path
+		return filepath.ToSlash(path)
 	}
 	if strings.HasPrefix(path, home) {
-		return "~" + path[len(home):]
+		return filepath.ToSlash("~" + path[len(home):])
 	}
-	return path
+	return filepath.ToSlash(path)
 }
 
 func countSkills(skillsDir string) int {
