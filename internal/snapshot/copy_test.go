@@ -3,12 +3,15 @@ package snapshot
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
-	os.MkdirAll(filepath.Dir(path), 0755)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -73,16 +76,23 @@ func TestCopyDir_Exclusions(t *testing.T) {
 }
 
 func TestCopyDir_Symlinks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks require elevated permissions on Windows")
+	}
 	src := t.TempDir()
 	dst := filepath.Join(t.TempDir(), "out")
 
 	// Create a file and a symlink to it
 	writeFile(t, filepath.Join(src, "real.txt"), "content")
-	os.Symlink(filepath.Join(src, "real.txt"), filepath.Join(src, "link.txt"))
+	if err := os.Symlink(filepath.Join(src, "real.txt"), filepath.Join(src, "link.txt")); err != nil {
+		t.Fatal(err)
+	}
 
 	// Create a dir and a symlink to it
 	writeFile(t, filepath.Join(src, "realdir/file.txt"), "dirfile")
-	os.Symlink(filepath.Join(src, "realdir"), filepath.Join(src, "linkdir"))
+	if err := os.Symlink(filepath.Join(src, "realdir"), filepath.Join(src, "linkdir")); err != nil {
+		t.Fatal(err)
+	}
 
 	count, err := CopyDir(src, dst, nil)
 	if err != nil {
@@ -108,11 +118,16 @@ func TestCopyDir_Symlinks(t *testing.T) {
 }
 
 func TestCopyDir_DanglingSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks require elevated permissions on Windows")
+	}
 	src := t.TempDir()
 	dst := filepath.Join(t.TempDir(), "out")
 
 	writeFile(t, filepath.Join(src, "real.txt"), "exists")
-	os.Symlink("/nonexistent/path", filepath.Join(src, "dangling"))
+	if err := os.Symlink("/nonexistent/path", filepath.Join(src, "dangling")); err != nil {
+		t.Fatal(err)
+	}
 
 	count, err := CopyDir(src, dst, nil)
 	if err != nil {
@@ -149,13 +164,18 @@ func TestCopyDir_SourceNotExist(t *testing.T) {
 }
 
 func TestCopyDir_Permissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix file permissions not applicable on Windows")
+	}
 	src := t.TempDir()
 	dst := filepath.Join(t.TempDir(), "out")
 
 	path := filepath.Join(src, "script.sh")
-	os.WriteFile(path, []byte("#!/bin/sh"), 0755)
+	if err := os.WriteFile(path, []byte("#!/bin/sh"), 0755); err != nil {
+		t.Fatal(err)
+	}
 
-	CopyDir(src, dst, nil)
+	_, _ = CopyDir(src, dst, nil)
 
 	info, err := os.Stat(filepath.Join(dst, "script.sh"))
 	if err != nil {
