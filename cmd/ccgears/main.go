@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/mryan/ccgears/internal/config"
+	"github.com/mryan/ccgears/internal/preset"
 	"github.com/mryan/ccgears/internal/ui"
 )
 
@@ -48,6 +49,20 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "save":
+			cfg := mustLoadConfig()
+			if cfg.ActivePreset == "" {
+				_, _ = fmt.Fprintln(os.Stderr, "No active preset. Load a preset first with: ccgears load <name>")
+				os.Exit(1)
+			}
+			projectDir := mustGetwd()
+			count, err := preset.Save(cfg, cfg.ActivePreset, projectDir)
+			if err != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Saved to preset '%s' (%d files).\n", cfg.ActivePreset, count)
+			return
 		case "switch":
 			// Called by /ccgears skill inside Claude Code.
 			// Creates marker, lists presets, finds and kills the claude process.
@@ -72,7 +87,7 @@ func main() {
 		os.Exit(1)
 	}
 	projectDir := mustGetwd()
-	resume := false
+	sessionID := ""
 
 	for {
 		// Show CCGears TUI
@@ -91,7 +106,10 @@ func main() {
 		}
 
 		// Launch claude as subprocess (CCGears stays alive)
-		runClaudeSession(resume)
+		runClaudeSession(sessionID)
+
+		// Capture the session ID of the session that just exited
+		sessionID = findLastSessionID(projectDir)
 
 		// Claude exited. Check if /ccgears was invoked (marker file).
 		if _, err := os.Stat(markerFile); err != nil {
@@ -99,9 +117,8 @@ func main() {
 		}
 
 		// Marker exists → user wants to switch presets
-		os.Remove(markerFile)
-		resume = true // next claude launch will --resume
-		// Loop back to TUI
+		_ = os.Remove(markerFile)
+		// Loop back to TUI; next launch will --resume with the captured session ID
 	}
 }
 
@@ -109,7 +126,7 @@ func main() {
 // CCGears stays alive as the parent process.
 // SIGINT is ignored so that when /ccgears skill sends kill -INT to Claude,
 // CCGears survives and can check the marker file.
-func runClaudeSession(resume bool) {
+func runClaudeSession(sessionID string) {
 	claudePath, err := exec.LookPath("claude")
 	if err != nil {
 		fmt.Println("  'claude' not found in PATH. Install Claude Code first.")
@@ -117,8 +134,8 @@ func runClaudeSession(resume bool) {
 	}
 
 	args := []string{}
-	if resume {
-		args = append(args, "--resume")
+	if sessionID != "" {
+		args = append(args, "--resume", sessionID)
 	}
 
 	// Ignore SIGINT so CCGears survives when /ccgears skill kills Claude
@@ -135,6 +152,60 @@ func runClaudeSession(resume bool) {
 	signal.Reset(syscall.SIGINT)
 }
 
+// findLastSessionID finds the most recently modified session file for the given project directory.
+// Session files are at ~/.claude/projects/<encoded-cwd>/<session-id>.jsonl
+func findLastSessionID(projectDir string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	// Encode the cwd: replace non-alphanumeric chars with -
+	absDir, err := filepath.Abs(projectDir)
+	if err != nil {
+		return ""
+	}
+
+	var encoded strings.Builder
+	for _, r := range absDir {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			encoded.WriteRune(r)
+		} else {
+			encoded.WriteRune('-')
+		}
+	}
+
+	sessDir := filepath.Join(home, ".claude", "projects", encoded.String())
+	entries, err := os.ReadDir(sessDir)
+	if err != nil {
+		return ""
+	}
+
+	var newestName string
+	var newestTime int64
+
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().UnixNano() > newestTime {
+			newestTime = info.ModTime().UnixNano()
+			newestName = e.Name()
+		}
+	}
+
+	if newestName == "" {
+		return ""
+	}
+
+	// Strip .jsonl extension to get session ID
+	return strings.TrimSuffix(newestName, ".jsonl")
+}
+
 // killClaudeParent walks up the process tree from our PID to find the
 // claude process, then sends it SIGINT. Only kills that specific process.
 func killClaudeParent() {
@@ -147,13 +218,13 @@ func killClaudeParent() {
 		name := getProcessName(ppid)
 		if name == "claude" || name == "node" {
 			// Found it — send SIGINT to just this process
-			syscall.Kill(ppid, syscall.SIGINT)
+			_ = syscall.Kill(ppid, syscall.SIGINT)
 			return
 		}
 		pid = ppid
 	}
 	// Fallback: kill direct parent
-	syscall.Kill(syscall.Getppid(), syscall.SIGINT)
+	_ = syscall.Kill(syscall.Getppid(), syscall.SIGINT)
 }
 
 // getParentPID reads the parent PID of a given PID via ps.

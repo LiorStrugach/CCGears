@@ -61,7 +61,7 @@ func Create(cfg *config.Config, name, description, projectDir string) (*Meta, in
 	if validate.DirExists(claudeDir) {
 		n, err := snapshot.CopyDir(claudeDir, filepath.Join(presetDir, "claude"), snapshot.DefaultExcludes)
 		if err != nil {
-			os.RemoveAll(presetDir)
+			_ = os.RemoveAll(presetDir)
 			return nil, 0, fmt.Errorf("copying .claude/: %w", err)
 		}
 		totalFiles += n
@@ -71,7 +71,7 @@ func Create(cfg *config.Config, name, description, projectDir string) (*Meta, in
 	if validate.DirExists(toolsDir) {
 		n, err := snapshot.CopyDir(toolsDir, filepath.Join(presetDir, "tools"), snapshot.DefaultExcludes)
 		if err != nil {
-			os.RemoveAll(presetDir)
+			_ = os.RemoveAll(presetDir)
 			return nil, 0, fmt.Errorf("copying tools/: %w", err)
 		}
 		totalFiles += n
@@ -81,7 +81,7 @@ func Create(cfg *config.Config, name, description, projectDir string) (*Meta, in
 	if validate.FileExists(claudeMD) {
 		data, err := os.ReadFile(claudeMD)
 		if err == nil {
-			os.WriteFile(filepath.Join(presetDir, "CLAUDE.md"), data, 0644)
+			_ = os.WriteFile(filepath.Join(presetDir, "CLAUDE.md"), data, 0644)
 			totalFiles++
 		}
 	}
@@ -95,7 +95,7 @@ func Create(cfg *config.Config, name, description, projectDir string) (*Meta, in
 		SourceProject: projectDir,
 	}
 	if err := writeMeta(presetDir, meta); err != nil {
-		os.RemoveAll(presetDir)
+		_ = os.RemoveAll(presetDir)
 		return nil, 0, err
 	}
 
@@ -165,8 +165,8 @@ func Load(cfg *config.Config, name, projectDir string) (int, error) {
 	}
 
 	// Remove current state
-	snapshot.RemoveIfExists(filepath.Join(projectDir, ".claude"))
-	snapshot.RemoveIfExists(filepath.Join(projectDir, "tools"))
+	_ = snapshot.RemoveIfExists(filepath.Join(projectDir, ".claude"))
+	_ = snapshot.RemoveIfExists(filepath.Join(projectDir, "tools"))
 
 	totalFiles := 0
 
@@ -193,19 +193,21 @@ func Load(cfg *config.Config, name, projectDir string) (int, error) {
 	// Copy CLAUDE.md
 	claudeMDSrc := filepath.Join(presetDir, "CLAUDE.md")
 	if validate.FileExists(claudeMDSrc) {
-		snapshot.RemoveIfExists(filepath.Join(projectDir, "CLAUDE.md"))
+		_ = snapshot.RemoveIfExists(filepath.Join(projectDir, "CLAUDE.md"))
 		data, err := os.ReadFile(claudeMDSrc)
 		if err == nil {
-			os.WriteFile(filepath.Join(projectDir, "CLAUDE.md"), data, 0644)
+			_ = os.WriteFile(filepath.Join(projectDir, "CLAUDE.md"), data, 0644)
 			totalFiles++
 		}
 	}
 
-	// Ensure ccgears skill persists across preset switches
+	// Ensure ccgears skills persist across preset switches
 	ensureCCGearsSkill(filepath.Join(projectDir, ".claude"))
 
-	// Update last_used
-	updateLastUsed(cfg, name)
+	// Track active preset and update last_used
+	cfg.ActivePreset = name
+	_ = cfg.Save()
+	_ = updateLastUsed(cfg, name)
 
 	return totalFiles, nil
 }
@@ -223,7 +225,7 @@ func Save(cfg *config.Config, name, projectDir string) (int, error) {
 	// Replace claude/
 	claudeDst := filepath.Join(presetDir, "claude")
 	claudeSrc := filepath.Join(projectDir, ".claude")
-	snapshot.RemoveIfExists(claudeDst)
+	_ = snapshot.RemoveIfExists(claudeDst)
 	if validate.DirExists(claudeSrc) {
 		n, err := snapshot.CopyDir(claudeSrc, claudeDst, snapshot.DefaultExcludes)
 		if err != nil {
@@ -235,7 +237,7 @@ func Save(cfg *config.Config, name, projectDir string) (int, error) {
 	// Replace tools/
 	toolsDst := filepath.Join(presetDir, "tools")
 	toolsSrc := filepath.Join(projectDir, "tools")
-	snapshot.RemoveIfExists(toolsDst)
+	_ = snapshot.RemoveIfExists(toolsDst)
 	if validate.DirExists(toolsSrc) {
 		n, err := snapshot.CopyDir(toolsSrc, toolsDst, snapshot.DefaultExcludes)
 		if err != nil {
@@ -247,11 +249,11 @@ func Save(cfg *config.Config, name, projectDir string) (int, error) {
 	// Replace CLAUDE.md
 	claudeMDDst := filepath.Join(presetDir, "CLAUDE.md")
 	claudeMDSrc := filepath.Join(projectDir, "CLAUDE.md")
-	snapshot.RemoveIfExists(claudeMDDst)
+	_ = snapshot.RemoveIfExists(claudeMDDst)
 	if validate.FileExists(claudeMDSrc) {
 		data, err := os.ReadFile(claudeMDSrc)
 		if err == nil {
-			os.WriteFile(claudeMDDst, data, 0644)
+			_ = os.WriteFile(claudeMDDst, data, 0644)
 			totalFiles++
 		}
 	}
@@ -260,7 +262,7 @@ func Save(cfg *config.Config, name, projectDir string) (int, error) {
 	meta, _ := readMeta(presetDir)
 	meta.LastUsed = time.Now().Format(time.RFC3339)
 	meta.SourceProject = projectDir
-	writeMeta(presetDir, meta)
+	_ = writeMeta(presetDir, meta)
 
 	return totalFiles, nil
 }
@@ -312,25 +314,55 @@ func getCCGearsPath() string {
 	return resolved
 }
 
-// ensureCCGearsSkill writes the ccgears skill into .claude/skills/ccgears/
-// and ensures the Bash permission is in settings.local.json
-// so the /ccgears command persists and auto-approves after every preset load.
+// ccgearsSaveSkillTemplate is the SKILL.md for /ccgears-save. %s is the binary path.
+const ccgearsSaveSkillTemplate = `---
+name: ccgears-save
+description: >
+  Save current Claude Code config changes back to the active CCGears preset.
+  Use when the user has made changes to skills, tools, or permissions and
+  wants to persist them.
+allowed-tools: Bash(%s save)
+---
+
+# CCGears — Save Current Preset
+
+When this skill is invoked, IMMEDIATELY run this single Bash command.
+Do NOT ask questions. Just execute:
+
+` + "```" + `bash
+%s save
+` + "```" + `
+
+This saves the current .claude/ and tools/ state back to the active preset.
+`
+
+// ensureCCGearsSkill writes both ccgears skills (.claude/skills/ccgears/ and
+// .claude/skills/ccgears-save/) and ensures Bash permissions are in settings.local.json.
 func ensureCCGearsSkill(claudeDir string) {
 	binPath := getCCGearsPath()
-	skillContent := fmt.Sprintf(ccgearsSkillTemplate, binPath, binPath)
 
-	// Write skill file
-	skillDir := filepath.Join(claudeDir, "skills", "ccgears")
-	os.MkdirAll(skillDir, 0755)
-	os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(skillContent), 0644)
+	// Write /ccgears switch skill
+	switchContent := fmt.Sprintf(ccgearsSkillTemplate, binPath, binPath)
+	switchDir := filepath.Join(claudeDir, "skills", "ccgears")
+	_ = os.MkdirAll(switchDir, 0755)
+	_ = os.WriteFile(filepath.Join(switchDir, "SKILL.md"), []byte(switchContent), 0644)
 
-	// Ensure permission in settings.local.json
-	permPattern := fmt.Sprintf("Bash(%s switch)", binPath)
-	ensureCCGearsPermissions(claudeDir, permPattern)
+	// Write /ccgears-save skill
+	saveContent := fmt.Sprintf(ccgearsSaveSkillTemplate, binPath, binPath)
+	saveDir := filepath.Join(claudeDir, "skills", "ccgears-save")
+	_ = os.MkdirAll(saveDir, 0755)
+	_ = os.WriteFile(filepath.Join(saveDir, "SKILL.md"), []byte(saveContent), 0644)
+
+	// Ensure permissions for both commands
+	perms := []string{
+		fmt.Sprintf("Bash(%s switch)", binPath),
+		fmt.Sprintf("Bash(%s save)", binPath),
+	}
+	ensureCCGearsPermissions(claudeDir, perms)
 }
 
-// ensureCCGearsPermissions adds the ccgears Bash permission to settings.local.json.
-func ensureCCGearsPermissions(claudeDir string, permPattern string) {
+// ensureCCGearsPermissions adds ccgears Bash permissions to settings.local.json.
+func ensureCCGearsPermissions(claudeDir string, permPatterns []string) {
 	settingsFile := filepath.Join(claudeDir, "settings.local.json")
 
 	// Read existing settings
@@ -352,15 +384,21 @@ func ensureCCGearsPermissions(claudeDir string, permPattern string) {
 
 	allowList, _ := perms["allow"].([]interface{})
 
-	// Check if the permission already exists
+	// Check which permissions are missing
+	existing := make(map[string]bool)
 	for _, a := range allowList {
-		if s, ok := a.(string); ok && s == permPattern {
-			return // already present
+		if s, ok := a.(string); ok {
+			existing[s] = true
 		}
 	}
 
-	allowList = append(allowList, permPattern)
-	changed := true
+	changed := false
+	for _, p := range permPatterns {
+		if !existing[p] {
+			allowList = append(allowList, p)
+			changed = true
+		}
+	}
 
 	if !changed {
 		return
@@ -373,5 +411,5 @@ func ensureCCGearsPermissions(claudeDir string, permPattern string) {
 	if err != nil {
 		return
 	}
-	os.WriteFile(settingsFile, out, 0644)
+	_ = os.WriteFile(settingsFile, out, 0644)
 }

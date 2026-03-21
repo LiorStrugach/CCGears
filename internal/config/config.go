@@ -21,6 +21,7 @@ type Config struct {
 	StorePath     string `json:"-"`
 	BackupPath    string `json:"-"`
 	DefaultPreset string `json:"default_preset,omitempty"`
+	ActivePreset  string `json:"active_preset,omitempty"`
 	StorePathCfg  string `json:"store_path,omitempty"`
 }
 
@@ -42,7 +43,7 @@ func Load() (*Config, error) {
 	cfgFile := filepath.Join(home, configFileName)
 	data, err := os.ReadFile(cfgFile)
 	if err == nil {
-		json.Unmarshal(data, cfg)
+		_ = json.Unmarshal(data, cfg)
 		if cfg.StorePathCfg != "" {
 			cfg.StorePath = cfg.StorePathCfg
 		}

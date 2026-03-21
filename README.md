@@ -22,7 +22,8 @@ No more manually remembering which tools belong to which context. No more re-ena
 - **Preview before load** — See skills, permissions, tools, and CLAUDE.md headline before switching
 - **Diff before save** — Review what changed before updating a preset
 - **Auto-backup** — Current state is backed up before every load, with one-click undo
-- **Launch integration** — Optionally launch `claude` directly after loading a preset
+- **Seamless Claude Code integration** — `/ccgears` and `/ccgears-save` commands work inside Claude Code sessions
+- **Session continuity** — Switch presets mid-conversation and resume right where you left off
 - **Interactive TUI** — Arrow-key navigation powered by [Bubble Tea](https://github.com/charmbracelet/bubbletea)
 - **Cross-platform** — Builds for macOS, Linux, and Windows
 - **Zero config** — Works out of the box, stores presets in `~/.ccgears/`
@@ -106,6 +107,16 @@ After loading, press **Enter** to launch Claude Code directly, or **q** to retur
 
 Select **Scan & import** from the menu, enter a root directory (e.g. `~/Documents`), and CCGears will find all projects with Claude Code configurations. Use Space to toggle which ones to import, then Enter to confirm.
 
+### 4. Switch presets from inside Claude Code
+
+While working in a Claude Code session, type:
+
+```
+/ccgears
+```
+
+This automatically exits the session, opens CCGears to pick a new preset, and resumes the same conversation after loading. No manual steps needed.
+
 ---
 
 ## Usage
@@ -134,6 +145,8 @@ Launches the TUI with arrow-key navigation:
 
 **Controls:** `↑↓` or `j/k` to navigate, `Enter` to select, `q` or `Esc` to go back.
 
+After loading a preset, CCGears launches `claude` as a subprocess. CCGears stays alive in the background — when Claude exits, CCGears can reopen for another preset switch.
+
 ### Non-interactive mode
 
 For scripting and shell aliases:
@@ -141,6 +154,9 @@ For scripting and shell aliases:
 ```bash
 # Load a preset directly
 ccgears load infra-tools
+
+# Save current state to the active preset
+ccgears save
 
 # List all presets
 ccgears list
@@ -152,13 +168,67 @@ ccgears list --json
 ccgears help
 ```
 
-### Shell alias example
+### Claude Code slash commands
+
+Two slash commands are available inside any Claude Code session:
+
+| Command | What it does |
+|---------|-------------|
+| `/ccgears` | Switches presets. Auto-exits Claude, opens CCGears TUI, resumes the session after loading a new preset. |
+| `/ccgears-save` | Saves current `.claude/` and `tools/` state back to the active preset. Runs inline — no session exit needed. |
+
+These commands auto-execute without permission prompts. The `/ccgears` and `/ccgears-save` skills are automatically injected into every loaded preset, so they persist across switches.
+
+### Shell alias examples
 
 ```bash
 # Add to ~/.zshrc
 alias cc-infra="cd ~/projects/infra && ccgears load infra-tools && claude"
 alias cc-creative="cd ~/projects/creative && ccgears load watermelon && claude"
 ```
+
+---
+
+## The CCGears Loop
+
+When launched interactively, CCGears acts as a **parent process** that manages Claude Code sessions:
+
+```
+                    ┌──────────────────────┐
+                    │   CCGears TUI        │
+                    │   Pick & load preset │
+                    └──────┬───────────────┘
+                           │ Enter
+                           ▼
+                    ┌──────────────────────┐
+                    │   Claude Code        │
+                    │   (subprocess)       │
+                    │                      │
+                    │   /ccgears ──────────┤──▶ touches marker
+                    │   auto-exits         │    & kills claude
+                    └──────┬───────────────┘
+                           │
+                    CCGears detects marker
+                           │
+                           ▼
+                    ┌──────────────────────┐
+                    │   CCGears TUI        │
+                    │   Pick new preset    │
+                    └──────┬───────────────┘
+                           │ Enter
+                           ▼
+                    ┌──────────────────────┐
+                    │   Claude Code        │
+                    │   --resume <session> │
+                    │   (same conversation)│
+                    └──────────────────────┘
+```
+
+Key behaviors:
+- **CCGears stays alive** while Claude runs as a subprocess
+- **Session continuity** — after switching, `claude --resume <session-id>` picks up the exact conversation
+- **Clean exit** — if you `/exit` Claude normally (without `/ccgears`), CCGears exits too
+- **SIGINT isolation** — CCGears ignores Ctrl+C signals from the `/ccgears` skill so it survives
 
 ---
 
@@ -216,7 +286,7 @@ All data is stored locally in `~/.ccgears/`:
 
 ```
 ~/.ccgears/
-├── config.json                  # Settings (default preset, custom store path)
+├── config.json                  # Settings (active preset, default preset, store path)
 ├── presets/
 │   ├── infra-tools/
 │   │   ├── preset.json          # Metadata: name, description, timestamps
@@ -260,13 +330,22 @@ CCGears operates purely via the filesystem. It does not modify Claude Code inter
 1. Backs up current `.claude/`, `tools/`, `CLAUDE.md` to `~/.ccgears/backup/last/`
 2. Removes existing `.claude/` and `tools/` from the project
 3. Copies the preset's stored directories into the project
-4. Updates the preset's "last used" timestamp
+4. Injects `/ccgears` and `/ccgears-save` skills + auto-approve permissions
+5. Tracks the active preset in `config.json`
+6. Updates the preset's "last used" timestamp
 
 **Create/Save** copies files from your project into the preset store:
 - Symlinks are dereferenced (target content is copied, not the link)
 - `.DS_Store` and `__pycache__` are excluded automatically
 
 **Undo** reverses the last load by restoring from the backup slot.
+
+**Switch** (`ccgears switch`, called by `/ccgears` skill):
+1. Creates a marker file at `/tmp/.ccgears-switch`
+2. Lists available presets
+3. Sends SIGINT to the Claude Code process (graceful exit, session saved)
+4. CCGears parent process detects the marker, reopens TUI
+5. After loading a new preset, launches `claude --resume <session-id>`
 
 ---
 
@@ -276,10 +355,10 @@ CCGears operates purely via the filesystem. It does not modify Claude Code inter
 
 ```
 CCGears/
-├── cmd/ccgears/main.go          # CLI entry point
+├── cmd/ccgears/main.go          # CLI entry point, subprocess management
 ├── internal/
 │   ├── config/                   # Config loading, path resolution
-│   ├── preset/                   # CRUD operations, scan, diff
+│   ├── preset/                   # CRUD operations, scan, diff, skill injection
 │   ├── preview/                  # Parse skills, permissions, CLAUDE.md
 │   ├── snapshot/                 # File copying, backup/restore
 │   ├── ui/                       # Bubble Tea TUI (app, styles, components)
@@ -314,12 +393,27 @@ All other functionality uses the Go standard library.
 
 ---
 
+## CLI Reference
+
+| Command | Description |
+|---------|-------------|
+| `ccgears` | Interactive TUI (launches claude after loading) |
+| `ccgears load <name>` | Load a preset non-interactively |
+| `ccgears save` | Save current state to the active preset |
+| `ccgears list` | List all presets |
+| `ccgears list --json` | List presets as JSON |
+| `ccgears switch` | Internal: used by `/ccgears` skill to trigger preset switch |
+| `ccgears version` | Show version |
+| `ccgears help` | Show help |
+
+---
+
 ## Limitations
 
 - **Single backup slot** — Only the last load can be undone. Loading twice overwrites the first backup.
-- **No hot-reload** — Presets are loaded before starting Claude Code, not during a session. Restart `claude` to pick up changes.
 - **Preset names are global** — Names must be unique across all projects. Use descriptive names like `infra-frigate` instead of just `default`.
 - **Large workspaces** — Skill evaluation workspaces (images, videos) are included in snapshots. Presets for projects with large eval artifacts will be correspondingly large.
+- **Session resume** — The `/ccgears` flow finds the most recent session file by modification time. If multiple Claude sessions are active in the same directory, it may resume the wrong one.
 
 ---
 
