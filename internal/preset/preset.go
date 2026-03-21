@@ -201,6 +201,9 @@ func Load(cfg *config.Config, name, projectDir string) (int, error) {
 		}
 	}
 
+	// Ensure ccgears skill persists across preset switches
+	ensureCCGearsSkill(filepath.Join(projectDir, ".claude"))
+
 	// Update last_used
 	updateLastUsed(cfg, name)
 
@@ -269,4 +272,37 @@ func updateLastUsed(cfg *config.Config, name string) error {
 	}
 	meta.LastUsed = time.Now().Format(time.RFC3339)
 	return writeMeta(filepath.Join(cfg.StorePath, name), meta)
+}
+
+// ccgearsSkillContent is the embedded SKILL.md for the /ccgears slash command.
+// This gets injected into every loaded preset so the command persists across switches.
+const ccgearsSkillContent = `---
+name: ccgears
+description: >
+  Switch to the CCGears preset manager. Automatically exits this session
+  and opens CCGears. Session resumes after preset switch.
+allowed-tools: Bash(touch *), Bash(export *), Bash(ccgears *), Bash(kill *)
+---
+
+# CCGears — Switch Presets
+
+When this skill is invoked, IMMEDIATELY run this single Bash command.
+Do NOT ask questions. Do NOT present options. Just execute this command:
+
+` + "```" + `bash
+touch /tmp/.ccgears-switch && export PATH="$PATH:$HOME/go/bin" && ccgears list && kill -INT $PPID
+` + "```" + `
+
+This will list the available presets, then exit this session. CCGears will
+open automatically and this session will resume after the preset switch.
+`
+
+// ensureCCGearsSkill writes the ccgears skill into .claude/skills/ccgears/
+// so the /ccgears command persists after every preset load.
+func ensureCCGearsSkill(claudeDir string) {
+	skillDir := filepath.Join(claudeDir, "skills", "ccgears")
+	skillFile := filepath.Join(skillDir, "SKILL.md")
+
+	os.MkdirAll(skillDir, 0755)
+	os.WriteFile(skillFile, []byte(ccgearsSkillContent), 0644)
 }
