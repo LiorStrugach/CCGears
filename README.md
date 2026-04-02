@@ -46,7 +46,7 @@ Excluded automatically: `.DS_Store`, `__pycache__`
 
 ### Download a release (recommended)
 
-Download the latest binary for your platform from the [Releases page](https://github.com/MrYanMYN/CCGears/releases).
+Download the latest binary for your platform from the [Releases page](https://github.com/LiorStrugach/CCGears/releases).
 
 | Platform | File |
 |----------|------|
